@@ -1,10 +1,70 @@
-<!DOCTYPE html>
 <html>
-  <head>
-    <title>My Webpage</title>
-  </head>
-  <body>
-    <h1>Welcome to my webpage!</h1>
-    <p>Hello, and welcome to my webpage! My name is Yuli, and I am a Data Scientist. I'm passionate in sharing of knowledge</p>
-  </body>
+
+<head>
+    <title>Optimization Visualization</title>
+</head>
+
+<body>
+    <!-- Toy Calculator -->
+    <h1>Arithmatic Calculator</h1>
+    <form>
+        <label for="operation">Select Operation:</label>
+        <select id="operation">
+            <option value="add">Addition</option>
+            <option value="subtract">Subtraction</option>
+            <option value="multiply">Multiplication</option>
+            <option value="divide">Division</option>
+        </select>
+        <br>
+        <label for="num1">Enter First Number:</label>
+        <input type="text" id="num1">
+        <br>
+        <label for="num2">Enter Second Number:</label>
+        <input type="text" id="num2">
+        <br>
+        <button type="button" onclick="calculate()">Calculate</button>
+    </form>
+    <br>
+    <p>Result: <span id="result"></span></p>
+
+
+    <!-- 2D optimization visualization -->
+    <h2>Optimization Visualization in 2D</h2>
+        <!-- import matplotlib library -->
+        <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+
+    <form>
+        <label for="objective">Select Objective Function:</label>
+        <select id="objective" onchange="updateAlgorithms()">
+            <option value="obj1">Objective 1</option>
+            <option value="obj2">Objective 2</option>
+            <option value="obj3">Objective 3</option>
+        </select>
+        <br>
+
+        <label for="algorithm">Select Algorithm:</label>
+        <select id="algorithm" onchange="updateHyperparameters()">
+            <!-- Algorithm options will be generated dynamically here -->
+        </select>
+        <br>
+        
+        <div id="hyperparameter-controls"></div>
+    </form>
+    <br>
+
+    <!-- 3D plot -->
+    <div id="plot"></div>
+    <br>
+    
+    <!-- Pickup tool on the graph to allow 2D initial location to be selected -->
+    <div id="pickup-tool"></div>
+
+    <!-- Button to refresh the plot -->
+    <button type="button" onclick="refreshPlot()">Refresh Plot</button>
+
+    <!-- Import Javascript code to enable the interactive functions -->
+    <script src="index.js"></script>
+    
+</body>
+
 </html>
