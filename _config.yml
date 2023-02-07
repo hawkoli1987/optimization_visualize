@@ -29,7 +29,7 @@ url: "" # the base hostname & protocol for your site, e.g. http://example.com
 
 # Build settings
 # theme: jekyll-theme-hydejack
-remote_theme: hydecorp/hydejack@v9
+remote_theme: hydecorp/hydejack
 accent_image: /assets/images/balance.jpg
 
 plugins:
