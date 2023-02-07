@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+
+    <meta charset="utf-8">
+    
+    <head>
+        <!-- import plotly module -->
+        <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjs/11.5.0/math.js"></script>
+    </head>
+    
+    <body>
+        <h2> Weighted Sum Objectives with Prior </h2>
+        <div>
+        </div>
+        <script>
+            // When the dropdown menu selection changes
+            document.getElementById("dropdown").addEventListener("change", function () {
+                // Get the selected option
+                obj_option = this.value;
+
+                // Remove the existing contour plot
+                function_g.selectAll("path").remove();
+
+                // re-calculate the objective function value at each grid location
+                f_values = grid_f_values(nx, ny);
+
+                // select all path elements in the svg group function_g, fill them with all colored contour lines representing objective function values.
+                function_g.selectAll("path")
+                    .data(contours(f_values)) // fill the serialized objective function value into the contour object
+                    .enter().append("path") // creates a new 'path' element for each filled contour object
+                    .attr("d", d3.geoPath(d3.geoIdentity().scale(width / nx))) // define the 'd' attribute of path, the value expected is a string representing path type
+                    .attr("fill", function (d) { return color_scale(d.value); }) // use the predefined color scale to fill each contour line with diff colors.
+                    .attr("stroke", "none");
+            });
+
+
+
+
+        </script>
+    </body>
+</html>
+
+
+            <ol>
+                {% for sub_page in pages %}
+                {% if sub_page.layout == 'page' and sub_page.order >= 1.1 and sub_page.order < 1.5 %} <li class="h8"
+                    style="margin-bottom: 0; padding-bottom: 0;">
+                    <a href="{{ sub_page.url | relative_url }}">
+                        <span>{{ sub_page.title }}</span>
+                    </a>
+                    </li>
+                    {% endif %}
+                    {% endfor %}
+            </ol>

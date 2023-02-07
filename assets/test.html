@@ -1,0 +1,167 @@
+
+<head>
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+    <script src="https://d3js.org/d3.v4.min.js"></script>
+    <script src="https://d3js.org/d3-contour.v1.min.js"></script>
+    <script src="https://d3js.org/d3-scale-chromatic.v1.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjs/11.5.0/math.js"></script>
+</head>
+
+<body>
+    <script>
+        let g = math.matrix([1, 2]).resize([2,1]);
+        let H = math.multiply(g, math.transpose(g));
+        console.log(g);
+        console.log(math.transpose(g));
+        console.log(H);
+
+        function nelderMead(initial, func, options) {
+            // Define default options if not provided
+            options = options || {};
+            let alpha = options.alpha || 1.0;
+            let beta = options.beta || 0.5;
+            let gamma = options.gamma || 2.0;
+            let sigma = options.sigma || 0.5;
+            let maxIterations = options.maxIterations || 100;
+            let tolerance = options.tolerance || 1e-6;
+            let numDimensions = initial.length;
+
+            // Initialize the simplex
+            let simplex = [];
+            for (let i = 0; i < numDimensions + 1; i++) {
+                simplex[i] = math.matrix(initial);
+                simplex[i]._data[i % numDimensions][0] += (i === 0 ? 1 : -1) * sigma;
+            }
+
+            // Evaluate function at each point in simplex
+            let f = [];
+            for (let i = 0; i < numDimensions + 1; i++) {
+                f[i] = func(simplex[i]._data);
+            }
+
+            // Main loop
+            let iteration = 0;
+            while (iteration < maxIterations) {
+                // Find the worst, second worst and best points
+                let worst, secondWorst, best;
+                worst = secondWorst = best = 0;
+                for (let i = 1; i < numDimensions + 1; i++) {
+                    if (f[i] > f[worst]) {
+                        secondWorst = worst;
+                        worst = i;
+                    } else if (f[i] > f[secondWorst]) {
+                        secondWorst = i;
+                    }
+                    if (f[i] < f[best]) {
+                        best = i;
+                    }
+                }
+
+                // Check for convergence
+                let range = 0.0;
+                for (let i = 0; i < numDimensions + 1; i++) {
+                    range += Math.abs(f[i] - f[best]);
+                }
+                if (range <= tolerance) {
+                    break;
+                }
+
+                // Compute the centroid of the simplex excluding the worst point
+                let centroid = math.zeros(numDimensions, 1);
+                for (let i = 0; i < numDimensions + 1; i++) {
+                    if (i !== worst) {
+                        centroid = math.add(centroid, simplex[i]);
+                    }
+                }
+                centroid = math.divide(centroid, numDimensions);
+
+                // Reflect the worst point
+                let reflected = math.add(centroid, math.multiply(alpha, math.subtract(centroid, simplex[worst])));
+                let fReflected = func(reflected._data);
+
+                // Check if reflected point is better than second worst
+                if (fReflected < f[secondWorst]) {
+                    // Replace the worst point with the reflected point
+                    simplex[worst] = reflected;
+                    f[worst] = fReflected;
+
+                    // Check if reflected point is better than the best
+                    if (fReflected < fBest) {
+                        // Check if reflected point is better than the second best
+                        if (fReflected < fSecondBest) {
+                        // Expand
+                        let fExpanded = getFitness(...math.add(reflected, math.multiply(expandFactor, math.subtract(reflected, centroid))));
+
+                        // Check if expanded point is better than the reflected point
+                        if (fExpanded < fReflected) {
+                            simplex[worst] = math.add(reflected, math.multiply(expandFactor, math.subtract(reflected, centroid)));
+                            fValues[worst] = fExpanded;
+                        } else {
+                            simplex[worst] = reflected;
+                            fValues[worst] = fReflected;
+                        }
+                        } else {
+                        simplex[worst] = reflected;
+                        fValues[worst] = fReflected;
+                        }
+                    } 
+                    else {
+                        // Check if reflected point is better than the second worst
+                        if (fReflected < fSecondWorst) {
+                            // Contract inside
+                            let contracted = math.add(centroid, math.multiply(contractInsideFactor, math.subtract(simplex[worst], centroid)));
+                            let fContracted = getFitness(...contracted);
+
+                            // Check if contracted inside point is better than the reflected point
+                            if (fContracted <= fReflected) {
+                                simplex[worst] = contracted;
+                                fValues[worst] = fContracted;
+                            } 
+                            else {
+                                // Contract outside
+                                let fContractedOutside = [];
+                                for (let i = 0; i < simplex.length; i++) {
+                                    fContractedOutside[i] = getFitness(...math.add(simplex[i], math.multiply(contractOutsideFactor, math.subtract(simplex[i], centroid))));
+                                }
+                            }
+                            // Check if contracted outside points are better than the current points
+                            let newSimplex = [];
+                            let newFValues = [];
+                            for (let i = 0; i < simplex.length; i++) {
+                                if (fContractedOutside[i] < fValues[i]) {
+                                    newSimplex[i] = math.add(simplex[i], math.multiply(contractOutsideFactor, math.subtract(simplex[i], centroid)));
+                                    newFValues[i] = fContractedOutside[i];
+                                } 
+                                else {
+                                    // Contract inside
+                                    let contractedInside = [];
+                                    for (let j = 0; j < simplex.length; j++) {
+                                    contractedInside[j] = math.multiply(math.add(simplex[j], simplex[bestIndex]), 0.5);
+                                    }
+                                    simplex = contractedInside;
+                                    // Recalculate function values
+                                    f = [];
+                                    for (let j = 0; j < simplex.length; j++) {
+                                    f[j] = getFitness(...simplex[j]);
+                                    }
+                                }
+                            }                        
+                        }
+                    
+                        // Update best
+                        if (fWorst < fBest) {
+                            bestIndex = worstIndex;
+                            fBest = fWorst;
+                        }
+                        // Check termination criteria
+                        if (math.norm(math.subtract(simplex[bestIndex], simplex[worstIndex])) < terminationTolerance) {
+                            break;
+                        }
+                    }
+                    // Return best solution
+                    return simplex[bestIndex];               
+                }
+            }
+        }
+    </script>
+</body>

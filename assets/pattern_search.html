@@ -1,0 +1,472 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+
+<!-- define line and button style -->
+<style>
+    .newton {stroke: black;}
+    .Newton {fill: black;}
+    .gauss_newton {stroke: blue;}
+    .Gauss_newton {fill: blue;}
+    .levenberg_m {stroke: red;}
+    .Levenberg_m {fill: red;}
+    .dfp {stroke: yellow;}
+    .DFP {fill: yellow;}
+    .bfgs {stroke: purple;}
+    .BFGS {fill: purple;}
+    .adam {stroke: green;}
+    .Adam {fill: green;}
+    circle:hover {fill-opacity: .3;}
+</style>
+
+<!-- import modules -->
+<head>
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+    <script src="https://d3js.org/d3.v4.min.js"></script>
+    <script src="https://d3js.org/d3-contour.v1.min.js"></script>
+    <script src="https://d3js.org/d3-scale-chromatic.v1.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjs/11.5.0/math.js"></script>
+</head>
+
+<body>
+    <script>
+
+    /* Math preprocessing */
+        h = 1e-7, // step used when approximating gradients
+        BiModal_Expression = "-2 * exp(-((x - 1)^2 + (y^2)) / 0.2) - 3 * exp(-((x + 1)^2 + (y^2)) / 0.2) + x^2 + y^2";
+        Quad_Expression = "x^2 + y^2";
+
+        // select the objective expression and function
+        selected_Expression = BiModal_Expression;
+
+        // // using math.js way of creating objective function and gradient/hessian, much slower.
+        // function f(x, y) {
+        //     return math.compile(selected_Expression).evaluate({ x: x, y: y });
+        // }
+        // function grad_f2(f_exp, x, y) {
+        //     const gradient_x = math.derivative(f_exp, "x").evaluate({ x: x, y: y });
+        //     const gradient_y = math.derivative(f_exp, "y").evaluate({ x: x, y: y });
+        //     return [gradient_x, gradient_y];
+        // };
+
+        // creating biModal objective function
+        function f(x, y) {
+            return Math.pow(x, 2) + 10*Math.pow(y, 2);
+            // return -2 * Math.exp(-((x - 1) * (x - 1) + y * y) / .2) + -3 * Math.exp(-((x + 1) * (x + 1) + y * y) / .2) + x * x + y * y;
+        };
+        
+        // calculate local gradient of f at (x, y), size (,2)
+        function grad_f(f, x, y) {
+            var grad_x = (f(x + h, y) - f(x, y)) / h;
+            var grad_y = (f(x, y + h) - f(x, y)) / h;
+            return [grad_x, grad_y];
+        };
+
+        console.log(grad_f(f, 1,1));
+        // calculate local hessian of f at (x, y), size (2,2) 
+        function hess_f(f, x, y) {
+            var hessian = [[(f(x + h, y) - 2 * f(x, y) + f(x - h, y)) / (h * h),
+                            (f(x + h, y + h) - f(x + h, y) - f(x, y + h) + f(x, y)) / (h * h)],
+                            [(f(x + h, y + h) - f(x, y + h) - f(x + h, y) + f(x, y)) / (h * h),
+                            (f(x, y + h) - 2 * f(x, y) + f(x, y - h)) / (h * h)]];
+            return hessian;
+        }
+        console.log('hessian =', hess_f(f, -1.16,-1.08));
+
+        // light weight implementation of 2D matrix and vector operations
+        
+        // dot product of two vectors
+        // function dotVV(u, v) {
+        //     return u[0] * v[0] + u[1] * v[1];
+        // }
+
+        // // matrix-vector multiplication
+        // function multMV(A, v) {
+        //     return [A[0][0] * v[0] + A[0][1] * v[1], A[1][0] * v[0] + A[1][1] * v[1]];
+        // }
+
+        // // vector-vector addition
+        // function addVV(u, v) {
+        //     return [u[0] + v[0], u[1] + v[1]];
+        // }
+
+        // serialize the values of f(x,y) on grid into 1 dim array. 
+        function grid_f_values(nx, ny) {
+            var grid = new Array(nx * ny);
+            for (i = 0; i < nx; i++) {
+                for (j = 0; j < ny; j++) {
+                    var x = scale_x(parseFloat(i) / nx * width),
+                        y = scale_y(parseFloat(j) / ny * height);
+                    // Set value at ordering expected by d3.contour
+                    grid[i + j * nx] = f(x, y);
+                };
+            };
+            return grid;
+        };
+
+    /* Set up optimization algorithms */
+        // newton's method implementation
+        function newton_path(x0, y0, num_steps) {
+            var history = [{ "x": scale_x.invert(x0), "y": scale_y.invert(y0) }];
+            var x1, y1, g, H, inv_H;
+            for (i = 0; i < num_steps; i++) {
+                g = grad_f(f, x0, y0);
+
+                if (math.norm(g) < 1e-5) {
+                    return history;
+                }      
+                H = hess_f(f, x0, y0);
+                if (math.abs(math.det(H)) < 1e-5) {
+                    return history;
+                }                     
+                // H = math.add(H, math.multiply(math.identity(H.length), 0.001)); // add a small positive step to make it always inversible
+              
+                inv_H = math.inv(H);
+                x0 -= math.multiply(inv_H, g)[0];
+                y0 -= math.multiply(inv_H, g)[1];
+                history.push({ "x": scale_x.invert(x0), "y": scale_y.invert(y0) });
+
+            };
+            return history;
+        };
+
+
+        function nelderMead(initial, func, options) {
+            // Define default options if not provided
+            options = options || {};
+            let alpha = options.alpha || 1.0;
+            let beta = options.beta || 0.5;
+            let gamma = options.gamma || 2.0;
+            let sigma = options.sigma || 0.5;
+            let maxIterations = options.maxIterations || 100;
+            let tolerance = options.tolerance || 1e-6;
+            let numDimensions = initial.length;
+
+            // Initialize the simplex
+            let simplex = [];
+            for (let i = 0; i < numDimensions + 1; i++) {
+                simplex[i] = math.matrix(initial);
+                simplex[i]._data[i % numDimensions][0] += (i === 0 ? 1 : -1) * sigma;
+            }
+
+            // Evaluate function at each point in simplex
+            let f = [];
+            for (let i = 0; i < numDimensions + 1; i++) {
+                f[i] = func(simplex[i]._data);
+            }
+
+            // Main loop
+            let iteration = 0;
+            while (iteration < maxIterations) {
+                // Find the worst, second worst and best points
+                let worst, secondWorst, best;
+                worst = secondWorst = best = 0;
+                for (let i = 1; i < numDimensions + 1; i++) {
+                    if (f[i] > f[worst]) {
+                        secondWorst = worst;
+                        worst = i;
+                    } else if (f[i] > f[secondWorst]) {
+                        secondWorst = i;
+                    }
+                    if (f[i] < f[best]) {
+                        best = i;
+                    }
+                }
+
+                // Check for convergence
+                let range = 0.0;
+                for (let i = 0; i < numDimensions + 1; i++) {
+                    range += Math.abs(f[i] - f[best]);
+                }
+                if (range <= tolerance) {
+                    break;
+                }
+
+                // Compute the centroid of the simplex excluding the worst point
+                let centroid = math.zeros(numDimensions, 1);
+                for (let i = 0; i < numDimensions + 1; i++) {
+                    if (i !== worst) {
+                        centroid = math.add(centroid, simplex[i]);
+                    }
+                }
+                centroid = math.divide(centroid, numDimensions);
+
+                // Reflect the worst point
+                let reflected = math.add(centroid, math.multiply(alpha, math.subtract(centroid, simplex[worst])));
+                let fReflected = func(reflected._data);
+
+                // Check if reflected point is better than second worst
+                if (fReflected < f[secondWorst]) {
+                    // Replace the worst point with the reflected point
+                    simplex[worst] = reflected;
+                    f[worst] = fReflected;
+
+                    // Check if reflected point is better than the best
+                    if (fReflected < fBest) {
+                        // Check if reflected point is better than the second best
+                        if (fReflected < fSecondBest) {
+                        // Expand
+                        let fExpanded = getFitness(...math.add(reflected, math.multiply(expandFactor, math.subtract(reflected, centroid))));
+
+                        // Check if expanded point is better than the reflected point
+                        if (fExpanded < fReflected) {
+                            simplex[worst] = math.add(reflected, math.multiply(expandFactor, math.subtract(reflected, centroid)));
+                            fValues[worst] = fExpanded;
+                        } else {
+                            simplex[worst] = reflected;
+                            fValues[worst] = fReflected;
+                        }
+                        } else {
+                        simplex[worst] = reflected;
+                        fValues[worst] = fReflected;
+                        }
+                    } 
+                    else {
+                        // Check if reflected point is better than the second worst
+                        if (fReflected < fSecondWorst) {
+                            // Contract inside
+                            let contracted = math.add(centroid, math.multiply(contractInsideFactor, math.subtract(simplex[worst], centroid)));
+                            let fContracted = getFitness(...contracted);
+
+                            // Check if contracted inside point is better than the reflected point
+                            if (fContracted <= fReflected) {
+                                simplex[worst] = contracted;
+                                fValues[worst] = fContracted;
+                            } 
+                            else {
+                                // Contract outside
+                                let fContractedOutside = [];
+                                for (let i = 0; i < simplex.length; i++) {
+                                    fContractedOutside[i] = getFitness(...math.add(simplex[i], math.multiply(contractOutsideFactor, math.subtract(simplex[i], centroid))));
+                                }
+                            }
+                            // Check if contracted outside points are better than the current points
+                            let newSimplex = [];
+                            let newFValues = [];
+                            for (let i = 0; i < simplex.length; i++) {
+                                if (fContractedOutside[i] < fValues[i]) {
+                                    newSimplex[i] = math.add(simplex[i], math.multiply(contractOutsideFactor, math.subtract(simplex[i], centroid)));
+                                    newFValues[i] = fContractedOutside[i];
+                                } 
+                                else {
+                                    // Contract inside
+                                    let contractedInside = [];
+                                    for (let j = 0; j < simplex.length; j++) {
+                                    contractedInside[j] = math.multiply(math.add(simplex[j], simplex[bestIndex]), 0.5);
+                                    }
+                                    simplex = contractedInside;
+                                    // Recalculate function values
+                                    f = [];
+                                    for (let j = 0; j < simplex.length; j++) {
+                                    f[j] = getFitness(...simplex[j]);
+                                    }
+                                }
+                            }                        
+                        }
+                    
+                        // Update best
+                        if (fWorst < fBest) {
+                            bestIndex = worstIndex;
+                            fBest = fWorst;
+                        }
+                        // Check termination criteria
+                        if (math.norm(math.subtract(simplex[bestIndex], simplex[worstIndex])) < terminationTolerance) {
+                            break;
+                        }
+                    }
+                    // Return best solution
+                    return simplex[bestIndex];               
+                }
+            }
+        }
+
+
+    /* setup plot configuraitons */
+
+        var width = 880,
+            height = 540,
+            nx = parseInt(width / 5), // grid sizes
+            ny = parseInt(height / 5),
+            // h = 1e-7, // step used when approximating gradients
+            drawing_time = 30; // max time to run optimization
+
+        // create a Scalar Vector Graphics plot into the body of html
+        var svg = d3.select("body")
+            .append("svg")
+            .attr("width", width)
+            .attr("height", height);
+
+        // Parameters describing where function is defined
+        var domain_x = [-2, 2],
+            domain_y = [-2, 2],
+            domain_f = [-2, 8], // function range
+            contour_step = 0.5; // Step size of contour plot
+
+        var scale_x = d3.scaleLinear()
+            .domain([0, width])
+            .range(domain_x);
+
+        var scale_y = d3.scaleLinear()
+            .domain([0, height])
+            .range(domain_y);
+
+        var thresholds = d3.range(domain_f[0], domain_f[1], contour_step);
+
+        var color_scale = d3.scaleLinear()
+            .domain(d3.extent(thresholds))
+            .interpolate(function () { return d3.interpolateYlGnBu; });
+
+        // creates 3 group element, or 'g' element in JS syntax, assign them to different objects
+        var function_g = svg.append("g").on("mousedown", mousedown),
+            gradient_path_g = svg.append("g"),
+            menu_g = svg.append("g");
+        
+        /* Set up the contour plot */        
+
+        // create an empty contour object, with defined step size (threshold) and 2D area
+        var contours = d3.contours()
+            .size([nx, ny])
+            .thresholds(thresholds);
+
+        // calculate the objective function value at each grid location
+        var f_values = grid_f_values(nx, ny);
+
+        // select all path elements in the svg group function_g, fill them with all colored contour lines representing objective function values.
+        function_g.selectAll("path")
+            .data(contours(f_values)) // fill the serialized objective function value into the contour object
+            .enter().append("path") // creates a new 'path' element for each filled contour object
+            .attr("d", d3.geoPath(d3.geoIdentity().scale(width / nx))) // define the 'd' attribute of path, the value expected is a string representing path type
+            .attr("fill", function (d) { return color_scale(d.value); }) // use the predefined color scale to fill each contour line with diff colors.
+            .attr("stroke", "none");
+
+    /* Set up buttons */       
+
+        var draw_bool = { "Newton": true, "Gauss_newton": true, "Levenberg_m": true, "DFP": true, "BFGS": false , "Adam": false  };
+
+        var buttons = ["Newton", "Gauss_newton", "Levenberg_m", "DFP", "BFGS", "Adam"];
+        
+        // creates the rectangular background for the algorithm selection menu
+        menu_g.append("rect")
+            .attr("x", 0)
+            .attr("y", height - 40)
+            .attr("width", width)
+            .attr("height", 40)
+            .attr("fill", "white")
+            .attr("opacity", 0.2);
+
+        // creates the buttons for selecting algorithms to display
+        menu_g.selectAll("circle")
+            .data(buttons)
+            .enter()
+            .append("circle")
+            .attr("cx", function (d, i) { return width / buttons.length * (i + 0.25); })
+            .attr("cy", height - 20)
+            .attr("r", 10)
+            .attr("stroke-width", 0.5)
+            .attr("stroke", "black")
+            .attr("class", function (d) { console.log(d); return d; })
+            .attr("fill-opacity", 0.5)
+            .attr("stroke-opacity", 1)
+            .on("mousedown", button_press);
+
+        menu_g.selectAll("text")
+            .data(buttons)
+            .enter()
+            .append("text")
+            .attr("x", function (d, i) { return width / buttons.length * (i + 0.25) + 18; })
+            .attr("y", height - 14)
+            .text(function (d) { return d; })
+            .attr("text-anchor", "start")
+            .attr("font-family", "Helvetica Neue")
+            .attr("font-size", 15)
+            .attr("font-weight", 200)
+            .attr("fill", "white")
+            .attr("fill-opacity", 0.8);
+
+        // define the actions trigger when each button is pressed, 
+        // i.e. button pressed = hollow circle = unselected
+        function button_press() {
+            var type = d3.select(this).attr("class")
+            if (draw_bool[type]) {
+                d3.select(this).attr("fill-opacity", 0);
+                draw_bool[type] = false;
+            } else {
+                d3.select(this).attr("fill-opacity", 0.5)
+                draw_bool[type] = true;
+            }
+        }
+
+
+    /* Plotting operations */
+
+        var line_function = d3.line()
+            .x(function (d) { return d.x; })
+            .y(function (d) { return d.y; });
+
+        function draw_path(path_data, type) {
+            var gradient_path = gradient_path_g.selectAll(type)
+                .data(path_data)
+                .enter()
+                .append("path")
+                .attr("d", line_function(path_data.slice(0, 1)))
+                .attr("class", type)
+                .attr("stroke-width", 3)
+                .attr("fill", "none")
+                .attr("stroke-opacity", 0.5)
+                .transition()
+                .duration(drawing_time)
+                .delay(function (d, i) { return drawing_time * i; })
+                .attr("d", function (d, i) { return line_function(path_data.slice(0, i + 1)); })
+                .remove();
+
+            gradient_path_g.append("path")
+                .attr("d", line_function(path_data))
+                .attr("class", type)
+                .attr("stroke-width", 3)
+                .attr("fill", "none")
+                .attr("stroke-opacity", 0.5)
+                .attr("stroke-opacity", 0)
+                .transition()
+                .duration(path_data.length * drawing_time)
+                .attr("stroke-opacity", 0.5);
+        }
+
+        
+    /* Start optimization from click on contour map */
+
+        function mousedown() {
+            /* Get initial point */
+            var point = d3.mouse(this);
+            /* Optimize and draw paths */
+            optimize(scale_x(point[0]), scale_y(point[1]));
+        }
+
+        function optimize(x0, y0) {
+            gradient_path_g.selectAll("path").remove();
+
+            if (draw_bool.Newton) {
+                var newton_data = newton_path(x0, y0, 20);
+                draw_path(newton_data, "newton");
+            }
+            if (draw_bool.Gauss_newton) {
+                var gauss_newton_data = gauss_newton_path(x0, y0, 200);
+                draw_path(gauss_newton_data, "gauss_newton");
+            }
+            if (draw_bool.Levenberg_m) {
+                var levenberg_m_data = levenberg_m_path(x0, y0, 200, 1);
+                draw_path(levenberg_m_data, "levenberg_m");
+            }
+            if (draw_bool.DFP) {
+                var dfp_data = dfp_path(x0, y0, 20);
+                draw_path(dfp_data, "dfp");
+            }
+            if (draw_bool.BFGS) {
+                var bfgs_data = bfgs_path(x0, y0, 20);
+                draw_path(bfgs_data, "bfgs");
+            }
+            if (draw_bool.Adam) {
+                var adam_data = adam_path(x0, y0, 1e-2, 100, 0.7, 0.999, 1e-6);
+                draw_path(adam_data, "adam");
+            }
+        }
+
+    </script>

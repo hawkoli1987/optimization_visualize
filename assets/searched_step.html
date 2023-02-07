@@ -1,0 +1,631 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+
+<!-- define line and button style -->
+<style>
+    .bls {stroke: black;}
+    .BLS {fill: black;}
+    .sd {stroke: blue;}
+    .SD {fill: blue;}
+    .cg {stroke: red;}
+    .CG {fill: red;}
+    /* .adam {stroke: green;}
+    .Adam {fill: green;} */
+    circle:hover {fill-opacity: .3;}
+</style>
+
+<!-- import modules -->
+<head>
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+    <script src="https://d3js.org/d3.v4.min.js"></script>
+    <script src="https://d3js.org/d3-contour.v1.min.js"></script>
+    <script src="https://d3js.org/d3-scale-chromatic.v1.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjs/11.5.0/math.js"></script>
+</head>
+
+<body>
+    <select id="obj_selection" style="position: absolute; top: 10px; left: 10px;">
+        <option value="Quad">Quadratic</option>
+        <option value="BiModal">BiModal</option>
+        <option value="Rosenbrock">Rosenbrock</option>
+        <option value="Bean">Bean</option>
+        <option value="Jones">Jones</option>
+        <option value="Quad_discrete">Quad_discrete</option>
+        <option value="Rosenbrock_discrete">Rosenbrock_discrete</option>
+        <option value="Bean_discrete">Bean_discrete</option>
+        <option value="Jones_discrete">Jones_discrete</option>
+        <option value="Custom">Custom</option>
+    </select>
+    <script>
+    /* Math preprocessing */
+        const h = 1e-7; // step used when approximating gradients
+        var obj_option = "Quad";
+
+        // creating objective function - new
+        function f(x, y) {
+            switch (obj_option) {
+                case "Quad":
+                    return f_Quad(x, y);
+                case "BiModal":
+                    return -2 * Math.exp(-((x - 1) * (x - 1) + y * y) / .2) + -3 * Math.exp(-((x + 1) * (x + 1) + y * y) / .2) + x * x + y * y;
+                case "Bean":
+                    return f_Bean(x, y);
+                case "Rosenbrock":
+                    return f_Rosenbrock(x, y);
+                case "Jones": 
+                    return f_Jones(x, y);
+                case "Quad_discrete": 
+                    return discretize(f_Quad, x, y);                   
+                case "Bean_discrete":
+                    return discretize(f_Bean, x, y);
+                case "Rosenbrock_discrete":
+                    return discretize(f_Rosenbrock, x, y);
+                case "Jones_discrete":
+                    return discretize(f_Jones, x, y);
+                case "Custom":
+                    return 0;                    
+            };
+        };
+
+        var f_Quad = function (x, y) {
+            var z = Math.pow(x, 2) + Math.pow(y, 2);
+            return z
+        };
+
+        var f_Rosenbrock = function (x, y) {
+            return Math.pow(1 - x, 2) + 100 * Math.pow(y - Math.pow(x, 2), 2);
+        };
+
+        var f_Bean = function (x, y) {
+            return Math.pow(1 - x, 2) + Math.pow(1 - y, 2) + 0.5 * Math.pow(2 * y - Math.pow(x, 2), 2)
+        };
+
+        var f_Jones = function (x, y) {
+            return Math.pow(x, 4) + Math.pow(y, 4) - 4 * Math.pow(x, 3) - 3 * Math.pow(y, 3) + 2 * Math.pow(x, 2) + 2 * x * y;
+        };
+
+        // additional objective function processing, if required. 
+        function add_peaks(x, y) {
+            var z = f_Quad(x, y);
+            // add a local valley around (5,5)
+            z -= 5 * Math.exp(-((x - 0.5) ** 2 + (y - 0.5) ** 2))
+
+            // add the other valleys/peaks
+            z -= 8 * Math.exp(-0.5 * ((x + 0.2) ** 2 + (y + 0.3) ** 2))
+            z += 5 * Math.exp(-0.05 * ((x + 0.1) ** 2 + (y - 0.1) ** 2))
+            return z
+        };
+
+        function discretize(func, x, y) {
+            // Define the grid size
+            const gridSize = 0.2;
+
+            // Calculate the grid indices for x and y
+            const xIndex = Math.floor(x / gridSize);
+            const yIndex = Math.floor(y / gridSize);
+
+            // Calculate the x and y values for the first point in the grid
+            const x1 = xIndex * gridSize;
+            const y1 = yIndex * gridSize;
+
+            // Return the value of the objective function at the first point in the grid
+            var z = func(x1, y1);
+
+            // Return the discretized objective function
+            return z;
+        };
+
+        // calculate local gradient of f at (x, y), size (,2)
+        function grad_f(f, x, y) {
+            var grad_x = (f(x + h, y) - f(x, y)) / h;
+            var grad_y = (f(x, y + h) - f(x, y)) / h;
+            return [grad_x, grad_y];
+        };
+
+        console.log('grad = ', grad_f(f, 1,1));
+        // calculate local hessian of f at (x, y), size (2,2) 
+        function hess_f(f, x, y) {
+            var hessian = [[(f(x + h, y) - 2 * f(x, y) + f(x - h, y)) / (h * h),
+                            (f(x + h, y + h) - f(x + h, y) - f(x, y + h) + f(x, y)) / (h * h)],
+                            [(f(x + h, y + h) - f(x, y + h) - f(x + h, y) + f(x, y)) / (h * h),
+                            (f(x, y + h) - 2 * f(x, y) + f(x, y - h)) / (h * h)]];
+            return hessian;
+        }
+        console.log('hessian =', hess_f(f, -1.16,-1.08));
+
+        // serialize the values of f(x,y) on grid into 1 dim array. 
+        function grid_f_values(nx, ny) {
+            var grid = new Array(nx * ny);
+            for (i = 0; i < nx; i++) {
+                for (j = 0; j < ny; j++) {
+                    var x = scale_x(parseFloat(i) / nx * width),
+                        y = scale_y(parseFloat(j) / ny * height);
+                    // Set value at ordering expected by d3.contour
+                    grid[i + j * nx] = f(x, y);
+                };
+            };
+            return grid;
+        };
+            
+        function z_normalize(grid){
+            const zMin = Math.min(...grid);
+            const zMax = Math.max(...grid);
+            const zNormalized = grid.map((value) => {   
+                // console.log((value - zMin) / (zMax - zMin) * 7.5);                     
+                return (value - zMin) / (zMax - zMin) * 7.5;                        
+            });
+            return zNormalized;
+        };
+
+
+        /* Set up optimization algorithms */
+
+        // backtracking line search step
+        // assume the search direction d is always at negative of g
+        function bls_step(f, d, x0, y0) {
+            var mu = 0.0001; // Sufficient decrease factor
+            var rho = 0.5; // backtracking factor
+            var stepsize = 1; // initialize with a large step size
+            
+            // console.log('d = ', d);
+            // console.log((d[0] * -d[0] + d[1] * -d[1]) );
+            // console.log( math.multiply(d,d));
+
+            // console.log('LHS =', f(x0 + stepsize * d[0], y0 + stepsize * d[1]));
+            // console.log('RHS =', f(x0, y0) + mu * stepsize * (d[0] * -d[0] + d[1] * -d[1]));
+            // console.log('need to reduce ?', f(x0 + stepsize * d[0], y0 + stepsize * d[1]) - (f(x0, y0) + mu * stepsize * (d[0] * -d[0] + d[1] * -d[1])));
+            // console.log('need to reduce ?', (f(x0 + stepsize * d[0], y0 + stepsize * d[1]) - (f(x0, y0) + mu * stepsize * (d[0] * -d[0] + d[1] * -d[1]))) >0);
+            while (f(x0 + stepsize * d[0], y0 + stepsize * d[1]) > f(x0, y0) + mu * stepsize * (d[0] * -d[0] + d[1] * -d[1])) {
+                stepsize *= rho;
+                // console.log('LHS =', f(x0 + stepsize * d[0], y0 + stepsize * d[1]));
+                // console.log('RHS =', f(x0, y0) + mu * stepsize * (d[0] * -d[0] + d[1] * -d[1]));
+                // console.log('need to reduce ?', f(x0 + stepsize * d[0], y0 + stepsize * d[1]) - (f(x0, y0) + mu * stepsize * (d[0] * -d[0] + d[1] * -d[1])));
+                // console.log('need to reduce ?', (f(x0 + stepsize * d[0], y0 + stepsize * d[1]) - (f(x0, y0) + mu * stepsize * (d[0] * -d[0] + d[1] * -d[1]))) >0);
+                // console.log('stepsize =', stepsize);
+            }
+            return stepsize;
+        }
+
+        // backtracking line search full path
+        function bls_path(x0, y0, num_steps) {
+            var history = [{ "x": scale_x.invert(x0), "y": scale_y.invert(y0) }];
+            var g;
+            for (i = 0; i < num_steps; i++) {
+                g = grad_f(f, x0, y0);
+                
+                var stepsize = bls_step(f, math.multiply(-1,g), x0, y0);
+                x0 -= stepsize * g[0];
+                y0 -= stepsize * g[1];
+                history.push({ "x": scale_x.invert(x0), "y": scale_y.invert(y0) });
+            };
+            return history;
+        }
+
+        // // steepest gradient - Implementation 1
+        // // ref: https://www.youtube.com/watch?v=O7wd7dQylkM&t=1219
+        // function sd_path(x0, y0, num_steps) {
+        //     var history = [{ "x": scale_x.invert(x0), "y": scale_y.invert(y0) }];
+        //     var x1, y1, g, p, alpha;
+        //     alpha = 1;
+        //     g = grad_f(f, x0, y0)
+        //     p = math.multiply(g, -1);
+
+        //     for (var i = 0; i < num_steps; i++) {
+        //         history.push({ "x": scale_x.invert(x0), "y": scale_y.invert(y0) });
+        //         x0 -= math.add(x0, math.multiply(alpha, math.divide(g, math.norm(g))))[0];
+        //         y0 -= math.add(y0, math.multiply(alpha, math.divide(g, math.norm(g))))[1];   
+        //         g = grad_f(f, x0, y0);
+        //         if (math.norm(g) < 1e-5) {
+        //             return history;
+        //         }                
+        //         alpha = math.multiply(alpha, (math.dot(g, g)) / (math.dot(p, p)));
+        //         p = math.multiply(-1, g);
+        //     }
+        //     return history;
+        // }        
+
+        // steepest gradient - Implementation 2
+        // ref: https://www.youtube.com/watch?v=JfREfGtFTLA&t=663s
+        function sd_path(x0, y0, num_steps) {
+            var history = [{ "x": scale_x.invert(x0), "y": scale_y.invert(y0) }];
+            var r, p, g, H, alpha;
+
+            g = grad_f(f, x0, y0);
+            H = hess_f(f, x0, y0);
+            r =  math.multiply(-1, math.add(g, math.multiply(H, [x0,y0])));
+            p = r;
+
+            for (var i = 0; i < num_steps; i++) {
+                history.push({ "x": scale_x.invert(x0), "y": scale_y.invert(y0) });
+                g = grad_f(f, x0, y0);
+                H = hess_f(f, x0, y0);
+                // console.log('H_old = ', H);
+                // // H = math.add(H, math.multiply(math.identity(H.length), 0.001));
+                // console.log('H_new = ', H);
+                p = math.multiply(-1, g);
+                // console.log('x = ', x0, y0);
+                // console.log('g = ', g);
+                // console.log('H = ', H);
+                // console.log('p = ', p);                
+                // console.log('math.dot(math.multiply(p, H), p) = ', math.dot(math.multiply(p, H), p));                
+                if (math.norm(p) < 1e-10) {
+                    return history;
+                }; 
+                alpha = math.dot(p, p) / math.dot(math.multiply(p, H), p);
+                // console.log('x_old = ', x0, y0);
+                // console.log('alpha = ', alpha);
+                
+                x0 += math.multiply(p, alpha)[0];
+                y0 += math.multiply(p, alpha)[1];
+               
+            }
+            return history;
+        }
+
+        // // steepest gradient - Implementation 3 - not working
+        // // ref: https://towardsdatascience.com/descent-method-steepest-descent-and-conjugate-gradient-math-explained-78601d8df3ce
+        // function sd_path(x0, y0, num_steps) {
+        //     var history = [{ "x": scale_x.invert(x0), "y": scale_y.invert(y0) }];
+        //     var r, p, g, H, alpha;
+
+        //     g = grad_f(f, x0, y0);
+        //     H = hess_f(f, x0, y0);
+        //     r = math.multiply(-1, math.add(g, math.multiply(H, [x0,y0])));
+        //     p = r;
+
+        //     for (var i = 0; i < num_steps; i++) {
+
+        //         console.log('norm(r) = ', math.norm(r));
+        //         if (math.norm(r) < 1e-10) {
+        //             return history;
+        //         };            
+                
+        //         alpha = math.dot(p, r) / math.dot(math.multiply(p, H), p);
+        //         console.log('pAp = ', math.dot(math.multiply(p, H), p));
+        //         // console.log('x_old = ', x0, y0);
+        //         console.log('alpha = ', alpha);
+        //         // console.log('g = ', g);
+        //         // console.log('H = ', H);
+        //         // console.log('r_old = ', r); 
+        //         // console.log('p_old = ', p);             
+        //         // console.log('math.multiply(H, p) = ', math.multiply(H, p));
+        //         // console.log('delta_r = ', math.multiply(alpha, math.multiply(H, p)));
+        //         r = math.subtract(r, math.multiply(alpha, math.multiply(H, p))) ;     
+        //         console.log('r_new = ', r);
+        //         x0 += math.multiply(p, alpha)[0];
+        //         y0 += math.multiply(p, alpha)[1];
+        //         console.log('x_new = ', x0, y0);
+                
+        //         history.push({ "x": scale_x.invert(x0), "y": scale_y.invert(y0) });
+      
+        //         // g = grad_f(f, x0, y0);
+        //         // H = hess_f(f, x0, y0);
+        //         p = r;
+                
+        //     }
+        //     return history;
+        // }
+
+        // // conjugate gradient
+        // function cg_path(x0, y0, learning_rate, num_steps, decay_rate, eps) {
+
+        //     var history = [{ "x": scale_x.invert(x0), "y": scale_y.invert(y0) }];
+        //     var gradient;
+        //     for (i = 0; i < num_steps; i++) {
+        //         gradient = grad_f(f, x0, y0)
+        //         cache_x = decay_rate * cache_x + (1 - decay_rate) * gradient[0] * gradient[0]
+        //         cache_y = decay_rate * cache_y + (1 - decay_rate) * gradient[1] * gradient[1]
+        //         x0 += x0 - learning_rate * gradient[0] / (Math.sqrt(cache_x) + eps)
+        //         y0 += y0 - learning_rate * gradient[1] / (Math.sqrt(cache_y) + eps)
+        //         history.push({ "x": scale_x.invert(x1), "y": scale_y.invert(y1) })
+
+        //     }
+        //     return history;
+        // }
+
+        // // linear conjugate gradient
+        // // ref: https://en.wikipedia.org/wiki/Conjugate_gradient_method
+        // function cg_path(x0, y0, num_steps) {
+        //     var history = [{ "x": scale_x.invert(x0), "y": scale_y.invert(y0) }];
+        //     var r, p, g, H, alpha, rs_old, rs_new;
+
+        //     g = grad_f(f, x0, y0);
+        //     H = hess_f(f, x0, y0);
+        //     r =  math.multiply(-1, math.add(g, math.multiply(H, [x0,y0])));
+        //     p = r;
+
+        //     for (var i = 0; i < num_steps; i++) {
+
+        //         console.log('step =' ,i);
+        //         rs_old = math.dot(r, r);
+        //         alpha = rs_old / math.dot(math.multiply(p, H), p);
+                
+        //         console.log('alpha = ', alpha);
+        //         console.log('old location = ', x0, y0);
+                
+        //         x0 += math.multiply(p, alpha)[0];
+        //         y0 += math.multiply(p, alpha)[1];
+                
+        //         history.push({ "x": scale_x.invert(x0), "y": scale_y.invert(y0) });
+
+        //         r = math.subtract(r, math.multiply(math.multiply(alpha, H), p));
+        //         rs_new = math.dot(r, r);
+
+        //         console.log('rs_new', rs_new);
+        //         if (rs_new < 1e-10) {
+        //             return history;
+        //         }; 
+
+        //         // Flecther-Reeves formula
+        //         beta = rs_new / rs_old;
+        //         p = math.add(r, math.multiply(beta, p));
+        //         g = grad_f(f, x0, y0);
+        //         H = hess_f(f, x0, y0);
+                
+        //         // console.log('H_old = ', H);
+        //         console.log('H_new = ', H);                                       
+        //     }
+        //     return history;
+        // }
+
+        // non-linear conjugate gradient
+        // ref: https://mdobook.github.io/
+        function cg_path(x0, y0, num_steps) {
+            var history = [{ "x": scale_x.invert(x0), "y": scale_y.invert(y0) }];
+            var r, p, g, H, alpha, rs_old, rs_new;
+
+            g = grad_f(f, x0, y0);
+            H = hess_f(f, x0, y0);
+            // r =  math.multiply(-1, math.add(g, math.multiply(H, [x0,y0])));
+            p = math.multiply(g, -1/math.norm(g));
+            
+            for (var i = 0; i < num_steps; i++) {
+                
+                // console.log('step =' ,i);
+                g_old = g;
+                gs_old = math.dot(g, g);
+                alpha = bls_step(f, p, x0, y0);
+                
+                // console.log('alpha = ', alpha);
+                // console.log('old location = ', x0, y0);
+                // console.log('g_old = ', g);
+                // console.log('p_old = ', p);
+                // console.log('math.multiply(p_old, alpha) = ', math.multiply(p, alpha));
+                x0 += math.multiply(p, alpha)[0];
+                y0 += math.multiply(p, alpha)[1];
+                
+                // console.log('new location = ', x0, y0);
+
+                history.push({ "x": scale_x.invert(x0), "y": scale_y.invert(y0) });
+
+                g = grad_f(f, x0, y0);
+                H = hess_f(f, x0, y0);
+                // console.log('g_new = ', g);   
+
+                gs_new = math.dot(g, g);
+
+                // console.log('gs_new', gs_new);
+
+                // resetting condition
+                if (gs_new < 1e-10) {
+                    return history;
+                }; 
+                // console.log(math.dot(g, g_old));
+                // console.log(math.dot(g, g_old)/gs_new);
+                if (math.dot(g, g_old)/gs_new >0.1){
+                    beta = 0;
+                } else {
+                    // Polak–Ribière formula
+                    beta = gs_new / gs_old;  
+                };                   
+
+                // console.log('new normalized -g', math.multiply(g, -1/math.norm(g)))  ;
+                // console.log('beta = ',beta);
+                // console.log('math.multiply(beta, p)', math.multiply(beta, p));
+
+                p = math.add(math.multiply(g, -1/math.norm(g)), math.multiply(beta, p));
+                                                    
+            }
+            return history;
+        }
+
+    /* setup plot configuraitons */
+
+        var width = 880,
+            height = 540,
+            nx = parseInt(width / 5), // grid sizes
+            ny = parseInt(height / 5),
+            drawing_time = 30; // max time to run optimization
+
+        // create a Scalar Vector Graphics plot into the body of html
+        var svg = d3.select("body")
+            .append("svg")
+            .attr("width", width)
+            .attr("height", height);
+
+        // Parameters describing where function is defined
+        var domain_x = [-2, 2],
+            domain_y = [-2, 2],
+            domain_f = [-2, 8], // function range
+            contour_step = 0.5; // Step size of contour plot
+
+        var scale_x = d3.scaleLinear()
+            .domain([0, width])
+            .range(domain_x);
+
+        var scale_y = d3.scaleLinear()
+            .domain([0, height])
+            .range(domain_y);
+
+        var thresholds = d3.range(domain_f[0], domain_f[1], contour_step);
+
+        var color_scale = d3.scaleLinear()
+            .domain(d3.extent(thresholds))
+            .interpolate(function () { return d3.interpolateYlGnBu; });
+
+        // creates 3 group element, or 'g' element in JS syntax, assign them to different objects
+        var function_g = svg.append("g").on("mousedown", mousedown),
+            gradient_path_g = svg.append("g"),
+            menu_g = svg.append("g");
+        
+    /* Set up the contour plot */        
+
+        // create an empty contour object, with defined step size (threshold) and 2D area
+        var contours = d3.contours()
+            .size([nx, ny])
+            .thresholds(thresholds);
+
+        // calculate the objective function value at each grid location
+        var f_values = grid_f_values(nx, ny);
+        f_values = z_normalize(f_values);
+
+        // select all path elements in the svg group function_g, fill them with all colored contour lines representing objective function values.
+        function_g.selectAll("path")
+            .data(contours(f_values)) // fill the serialized objective function value into the contour object
+            .enter().append("path") // creates a new 'path' element for each filled contour object
+            .attr("d", d3.geoPath(d3.geoIdentity().scale(width / nx))) // define the 'd' attribute of path, the value expected is a string representing path type
+            .attr("fill", function (d) { return color_scale(d.value); }) // use the predefined color scale to fill each contour line with diff colors.
+            .attr("stroke", "none");
+
+            
+        // refresh contour plot when the dropdown menu selection changes
+        document.getElementById("obj_selection").addEventListener("change", function () {
+            // Get the selected option
+            obj_option = this.value;
+
+            // Remove the existing contour plot
+            function_g.selectAll("path").remove();
+
+            // re-calculate the objective function value at each grid location
+            f_values = grid_f_values(nx, ny);
+            f_values = z_normalize(f_values);
+
+            // select all path elements in the svg group function_g, fill them with all colored contour lines representing objective function values.
+            function_g.selectAll("path")
+                .data(contours(f_values)) // fill the serialized objective function value into the contour object
+                .enter().append("path") // creates a new 'path' element for each filled contour object
+                .attr("d", d3.geoPath(d3.geoIdentity().scale(width / nx))) // define the 'd' attribute of path, the value expected is a string representing path type
+                .attr("fill", function (d) { return color_scale(d.value); }) // use the predefined color scale to fill each contour line with diff colors.
+                .attr("stroke", "none");
+        });
+
+    /* Set up buttons */       
+
+        var draw_bool = { "BLS": true, "SD": true, "CG": true};
+
+        var buttons = ["BLS", "SD", "CG"];
+        
+        // creates the rectangular background for the algorithm selection menu
+        menu_g.append("rect")
+            .attr("x", 0)
+            .attr("y", height - 40)
+            .attr("width", width)
+            .attr("height", 40)
+            .attr("fill", "white")
+            .attr("opacity", 0.2);
+
+        // creates the buttons for selecting algorithms to display
+        menu_g.selectAll("circle")
+            .data(buttons)
+            .enter()
+            .append("circle")
+            .attr("cx", function (d, i) { return width / buttons.length * (i + 0.25); })
+            .attr("cy", height - 20)
+            .attr("r", 10)
+            .attr("stroke-width", 0.5)
+            .attr("stroke", "black")
+            .attr("class", function (d) { console.log(d); return d; })
+            .attr("fill-opacity", 0.5)
+            .attr("stroke-opacity", 1)
+            .on("mousedown", button_press);
+
+        menu_g.selectAll("text")
+            .data(buttons)
+            .enter()
+            .append("text")
+            .attr("x", function (d, i) { return width / buttons.length * (i + 0.25) + 18; })
+            .attr("y", height - 14)
+            .text(function (d) { return d; })
+            .attr("text-anchor", "start")
+            .attr("font-family", "Helvetica Neue")
+            .attr("font-size", 15)
+            .attr("font-weight", 200)
+            .attr("fill", "white")
+            .attr("fill-opacity", 0.8);
+
+        // define the actions trigger when each button is pressed, 
+        // i.e. button pressed = hollow circle = unselected
+        function button_press() {
+            var type = d3.select(this).attr("class")
+            if (draw_bool[type]) {
+                d3.select(this).attr("fill-opacity", 0);
+                draw_bool[type] = false;
+            } else {
+                d3.select(this).attr("fill-opacity", 0.5)
+                draw_bool[type] = true;
+            }
+        }
+
+
+    /* Plotting operations */
+
+        var line_function = d3.line()
+            .x(function (d) { return d.x; })
+            .y(function (d) { return d.y; });
+
+        function draw_path(path_data, type) {
+            var gradient_path = gradient_path_g.selectAll(type)
+                .data(path_data)
+                .enter()
+                .append("path")
+                .attr("d", line_function(path_data.slice(0, 1)))
+                .attr("class", type)
+                .attr("stroke-width", 3)
+                .attr("fill", "none")
+                .attr("stroke-opacity", 0.5)
+                .transition()
+                .duration(drawing_time)
+                .delay(function (d, i) { return drawing_time * i; })
+                .attr("d", function (d, i) { return line_function(path_data.slice(0, i + 1)); })
+                .remove();
+
+            gradient_path_g.append("path")
+                .attr("d", line_function(path_data))
+                .attr("class", type)
+                .attr("stroke-width", 3)
+                .attr("fill", "none")
+                .attr("stroke-opacity", 0.5)
+                .attr("stroke-opacity", 0)
+                .transition()
+                .duration(path_data.length * drawing_time)
+                .attr("stroke-opacity", 0.5);
+        }
+
+        
+    /* Start optimization from click on contour map */
+
+        function mousedown() {
+            /* Get initial point */
+            var point = d3.mouse(this);
+            /* Optimize and draw paths */
+            optimize(scale_x(point[0]), scale_y(point[1]));
+        }
+
+        function optimize(x0, y0) {
+            gradient_path_g.selectAll("path").remove();
+
+            if (draw_bool.BLS) {
+                var bls_data = bls_path(x0, y0, 20);
+                draw_path(bls_data, "bls");
+            }
+            if (draw_bool.SD) {
+                var sd_data = sd_path(x0, y0, 20);
+                draw_path(sd_data, "sd");
+            }
+            if (draw_bool.CG) {
+                var cg_data = cg_path(x0, y0, 20);
+                draw_path(cg_data, "cg");
+            }
+        }
+
+    </script>

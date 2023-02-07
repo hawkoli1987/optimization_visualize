@@ -1,0 +1,645 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+
+<!-- define line and button style -->
+<style>
+    .ga {fill: black;}
+    .GA {fill: black;}
+    circle:hover {fill-opacity: .3;}
+</style>
+
+<!-- import modules -->
+<head>
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+    <script src="https://d3js.org/d3.v4.min.js"></script>
+    <script src="https://d3js.org/d3-contour.v1.min.js"></script>
+    <script src="https://d3js.org/d3-scale-chromatic.v1.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjs/11.5.0/math.js"></script>
+</head>
+
+<body>
+    <select id="obj_selection" style="position: absolute; top: 10px; left: 10px;">
+        <option value="Quad">Quadratic</option>
+        <option value="BiModal">BiModal</option>
+        <option value="Rosenbrock">Rosenbrock</option>
+        <option value="Bean">Bean</option>
+        <option value="Jones">Jones</option>
+        <option value="Quad_discrete">Quad_discrete</option>
+        <option value="Rosenbrock_discrete">Rosenbrock_discrete</option>
+        <option value="Bean_discrete">Bean_discrete</option>
+        <option value="Jones_discrete">Jones_discrete</option>
+        <option value="Custom">Custom</option>
+    </select>
+    <script>
+    /* Math preprocessing */
+        const h = 1e-7; // step used when approximating gradients
+        var obj_option = "Quad";
+        
+        // creating objective function - new
+        function f(x, y) {
+            switch (obj_option) {
+                case "Quad":
+                    return f_Quad(x, y);
+                case "BiModal":
+                    return -2 * Math.exp(-((x - 1) * (x - 1) + y * y) / .2) + -3 * Math.exp(-((x + 1) * (x + 1) + y * y) / .2) + x * x + y * y;
+                case "Bean":
+                    return f_Bean(x, y);
+                case "Rosenbrock":
+                    return f_Rosenbrock(x, y);
+                case "Jones": 
+                    return f_Jones(x, y);
+                case "Quad_discrete": 
+                    return discretize(f_Quad, x, y);                   
+                case "Bean_discrete":
+                    return discretize(f_Bean, x, y);
+                case "Rosenbrock_discrete":
+                    return discretize(f_Rosenbrock, x, y);
+                case "Jones_discrete":
+                    return discretize(f_Jones, x, y);
+                case "Custom":
+                    return 0;                    
+            };
+        };
+
+        var f_Quad = function (x, y) {
+            var z = Math.pow(x, 2) + Math.pow(y, 2);
+            return z
+        };
+
+        var f_Rosenbrock = function (x, y) {
+            return Math.pow(1 - x, 2) + 100 * Math.pow(y - Math.pow(x, 2), 2);
+        };
+
+        var f_Bean = function (x, y) {
+            return Math.pow(1 - x, 2) + Math.pow(1 - y, 2) + 0.5 * Math.pow(2 * y - Math.pow(x, 2), 2)
+        };
+
+        var f_Jones = function (x, y) {
+            return Math.pow(x, 4) + Math.pow(y, 4) - 4 * Math.pow(x, 3) - 3 * Math.pow(y, 3) + 2 * Math.pow(x, 2) + 2 * x * y;
+        };
+
+        // additional objective function processing, if required. 
+        function add_peaks(x, y) {
+            var z = f_Quad(x, y);
+            // add a local valley around (5,5)
+            z -= 5 * Math.exp(-((x - 0.5) ** 2 + (y - 0.5) ** 2))
+
+            // add the other valleys/peaks
+            z -= 8 * Math.exp(-0.5 * ((x + 0.2) ** 2 + (y + 0.3) ** 2))
+            z += 5 * Math.exp(-0.05 * ((x + 0.1) ** 2 + (y - 0.1) ** 2))
+            return z
+        };
+
+        function discretize(func, x, y) {
+            // Define the grid size
+            const gridSize = 0.2;
+
+            // Calculate the grid indices for x and y
+            const xIndex = Math.floor(x / gridSize);
+            const yIndex = Math.floor(y / gridSize);
+
+            // Calculate the x and y values for the first point in the grid
+            const x1 = xIndex * gridSize;
+            const y1 = yIndex * gridSize;
+
+            // Return the value of the objective function at the first point in the grid
+            var z = func(x1, y1);
+
+            // Return the discretized objective function
+            return z;
+        };
+
+        // calculate local gradient of f at (x, y), size (,2)
+        function grad_f(f, x, y) {
+            var grad_x = (f(x + h, y) - f(x, y)) / h;
+            var grad_y = (f(x, y + h) - f(x, y)) / h;
+            return [grad_x, grad_y];
+        };
+
+        console.log('grad = ', grad_f(f, 1,1));
+        // calculate local hessian of f at (x, y), size (2,2) 
+        function hess_f(f, x, y) {
+            var hessian = [[(f(x + h, y) - 2 * f(x, y) + f(x - h, y)) / (h * h),
+                            (f(x + h, y + h) - f(x + h, y) - f(x, y + h) + f(x, y)) / (h * h)],
+                            [(f(x + h, y + h) - f(x, y + h) - f(x + h, y) + f(x, y)) / (h * h),
+                            (f(x, y + h) - 2 * f(x, y) + f(x, y - h)) / (h * h)]];
+            return hessian;
+        }
+        console.log('hessian =', hess_f(f, -1.16,-1.08));
+
+        // serialize the values of f(x,y) on grid into 1 dim array. 
+        function grid_f_values(nx, ny) {
+            var grid = new Array(nx * ny);
+            for (i = 0; i < nx; i++) {
+                for (j = 0; j < ny; j++) {
+                    var x = scale_x(parseFloat(i) / nx * width),
+                        y = scale_y(parseFloat(j) / ny * height);
+                    // Set value at ordering expected by d3.contour
+                    grid[i + j * nx] = f(x, y);
+                };
+            };
+            return grid;
+        };
+            
+        function z_normalize(grid){
+            const zMin = Math.min(...grid);
+            const zMax = Math.max(...grid);
+            const zNormalized = grid.map((value) => {   
+                // console.log((value - zMin) / (zMax - zMin) * 7.5);                     
+                return (value - zMin) / (zMax - zMin) * 7.5;                        
+            });
+            return zNormalized;
+        };
+
+        // genetic algorithm implementation 1
+        // ref: https://github.com/MorvanZhou/Evolutionary-Algorithm
+        function ga_path() {
+            const numGenerations = 500;
+            const populationSize = 20;
+            const geneLength = 20;
+            const crossoverRate = 0.6;
+            const mutationRate = 0.0001;
+
+            // Create the initial population of Genes
+            let population = [];
+            for (let i = 0; i < populationSize; i++) {
+                let DNA = [];
+                for (let j = 0; j < geneLength; j++) {
+                DNA.push(Math.round(Math.random()));
+                }
+                population.push(DNA);
+            }
+
+            // The history of all generations of Genes
+            let history = [population];
+            var baseline = 8;
+
+            // Helper function to convert a DNA to a 2D coordinate (x, y)
+            function toCoordinate(DNA) {
+                let x = 0, y = 0;
+                for (let i = 0; i < geneLength / 2; i++) {
+                    x = x * 2 + DNA[i];
+                    y = y * 2 + DNA[i + geneLength / 2];
+                    };
+                x = (x / (Math.pow(2, geneLength / 2) - 1)) * 4 - 2;
+                y = (y / (Math.pow(2, geneLength / 2) - 1)) * 4 - 2;
+                return [x, y];
+            }
+
+            // Main loop for each generation
+            for (let generation = 1; generation <= numGenerations; generation++) {
+                let obj_values = [];
+                let fitnessScores = [];
+                let nextPopulation = [];
+                
+                // Calculate fitness scores for each DNA
+                for (let i = 0; i < populationSize; i++) {
+                    let DNA = population[i];
+                    let [x, y] = toCoordinate(DNA);
+                    let obj_value = f(x, y);
+                    baseline = math.max([f(x,y),baseline]);
+                    obj_values.push({ DNA, obj_value });
+                }
+                console.log('baseline', generation, '= ', baseline);
+                fitnessScores = obj_values.map((data) => {   
+                    return {DNA: data.DNA, fitnessScore: Math.abs(baseline - data.obj_value)};                        
+                });
+                
+                // Create fitnessPrefixSum array
+                let fitnessPrefixSum = [];
+                let prefixSum = 0;
+                for (let i = 0; i < fitnessScores.length; i++) {
+                    prefixSum += fitnessScores[i].fitnessScore;
+                    fitnessPrefixSum.push({ DNA: fitnessScores[i].DNA, prefixSum: prefixSum });
+                }
+
+                // Get total fitness sum
+                let fitnessTotalSum = prefixSum;
+                console.log('fitnessTotalSum', generation, '= ', fitnessTotalSum);
+
+                // Array to store the sampled genes from parents
+                let sampledParents = [];
+
+                // use binary search of a random number among prefixSum of each DNA, 
+                // to obtain a list of sampled parents based on their fitnessScore.
+                for (let i = 0; i < populationSize; i++) {
+                    // Random number between 0 and fitnessTotalSum
+                    let randomNum = Math.random() * fitnessTotalSum;
+
+                    // Binary search for the largest prefix sum less than randomNum
+                    let left = 0;
+                    let right = fitnessPrefixSum.length - 1;
+                    while (left < right) {
+                        let mid = Math.floor((left + right) / 2);
+                        if (fitnessPrefixSum[mid].prefixSum < randomNum) {
+                            left = mid + 1;
+                        } else {
+                            right = mid;
+                        }
+                    }
+
+                    // Add the corresponding DNA to the array
+                    sampledParents.push(fitnessPrefixSum[left].DNA);
+                }
+
+
+                for (let i = 0; i < populationSize; i++) {
+                    // apply crossover
+                    let parentA = population[i];
+                    let parentB = population[Math.floor(Math.random() * populationSize)];
+                    let child = [];
+                    if (Math.random() < crossoverRate) {
+                        for (let i = 0; i < geneLength; i++) {
+                            child.push(Math.random() < 0.5 ? parentA[i] : parentB[i]);
+                        }
+                    } else {
+                        child = parentA;
+                    }
+                    
+                    // Apply mutation
+                    for (let i = 0; i < geneLength; i++) {
+                        if (Math.random() < mutationRate) {
+                            child[i] = child[i] == 0 ? 1 : 0;
+                        }
+                    }
+
+                    // Append children to the new population
+                    nextPopulation.push(child);
+                };
+                population = nextPopulation;
+                history.push(population);
+            };
+
+            var history_coordinate = history.map((row) => {
+                return row.map((value) => {
+                    return { "x": scale_x.invert(toCoordinate(value)[0]), "y": scale_y.invert(toCoordinate(value)[1]) }
+                });
+            });
+
+            // Return the final history
+            return history_coordinate;
+        };
+
+        // // implementation #2, difficult to converge
+        // function ga_path() {
+        //     const numGenerations = 200;
+        //     const populationSize = 40;
+        //     const geneLength = 30;
+        //     const crossoverRate = 0.7;
+        //     const mutationRate = 0.001;
+
+        //     // Create the initial population of Genes
+        //     let population = [];
+        //     for (let i = 0; i < populationSize; i++) {
+        //         let Gene = [];
+        //         for (let j = 0; j < geneLength; j++) {
+        //         Gene.push(Math.round(Math.random()));
+        //         }
+        //         population.push(Gene);
+        //     }
+
+        //     // The history of all generations of Genes
+        //     let history = [population];
+
+        //     // Helper function to convert a Gene to a 2D coordinate (x, y)
+        //     function toCoordinate(Gene) {
+        //         let x = 0, y = 0;
+        //         for (let i = 0; i < geneLength / 2; i++) {
+        //             x = x * 2 + Gene[i];
+        //             y = y * 2 + Gene[i + geneLength / 2];
+        //             };
+        //         x = (x / (Math.pow(2, geneLength / 2) - 1)) * 4 - 2;
+        //         y = (y / (Math.pow(2, geneLength / 2) - 1)) * 4 - 2;
+        //         return [x, y];
+        //     }
+
+        //     // Helper function to obtain the fitness score of a coordinate (x, y)
+        //     function getFitness(x, y) {
+        //         let baseline = math.max(f(x,y), 0);
+        //         return Math.abs(f(x,y) - baseline);
+        //     }
+
+        //     // Main loop for each generation
+        //     for (let generation = 1; generation <= numGenerations; generation++) {
+        //         let fitnessScores = [];
+        //         let nextPopulation = [];
+
+        //         // Calculate fitness scores for each Gene
+        //         for (let i = 0; i < populationSize; i++) {
+        //             let Gene = population[i];
+        //             let [x, y] = toCoordinate(Gene);
+        //             let fitnessScore = getFitness(x, y);
+        //             fitnessScores.push({ Gene, fitnessScore });
+        //         }
+
+        //         // Sort the fitness scores in descending order
+        //         fitnessScores.sort((a, b) => b.fitnessScore - a.fitnessScore);
+
+        //         // Select the top 50% Genes based on fitness scores
+        //         for (let i = 0; i < populationSize / 2; i++) {
+        //             nextPopulation.push(fitnessScores[i].Gene);
+        //         };
+
+        //         // Generate the entire next generation using crossover and mutation
+        //         while (nextPopulation.length < populationSize) {
+        //             let parentA = nextPopulation[Math.floor(Math.random() * nextPopulation.length)];
+        //             let parentB = nextPopulation[Math.floor(Math.random() * nextPopulation.length)];
+        //             let child = [];
+
+        //             // Apply crossover
+        //             if (Math.random() < crossoverRate) {
+        //                 let crossoverPoint = Math.floor(Math.random() * geneLength);
+        //                 for (let i = crossoverPoint; i < geneLength; i++) {
+        //                     let tmp = parentA[i];
+        //                     parentA[i] = parentB[i];
+        //                     parentB[i] = tmp;
+        //                     };
+        //                 };
+                    
+        //             // Apply mutation
+        //             if (Math.random() < mutationRate) {
+        //                 let mutationPoint = Math.floor(Math.random() * geneLength);
+        //                 parentA[mutationPoint] = (parentA[mutationPoint] == 0) ? 1 : 0;
+        //             };
+                    
+        //             if (Math.random() < mutationRate) {
+        //                 let mutationPoint = Math.floor(Math.random() * geneLength);
+        //                 parentB[mutationPoint] = (parentB[mutationPoint] == 0) ? 1 : 0;
+        //             };
+                    
+        //             // Append children to the new population
+        //             nextPopulation.push(parentA);
+        //             nextPopulation.push(parentB);
+        //         };
+        //         population = nextPopulation;
+        //         history.push(population);
+        //     };
+
+        //     var history_coordinate = history.map((row) => {
+        //         return row.map((value) => {
+        //             return { "x": scale_x.invert(toCoordinate(value)[0]), "y": scale_y.invert(toCoordinate(value)[1]) }
+        //         });
+        //     });
+
+        //     // Return the final history
+        //     return history_coordinate;
+        // };
+
+
+
+    /* setup plot configuraitons */
+
+        var width = 880,
+            height = 540,
+            nx = parseInt(width / 5), // grid sizes
+            ny = parseInt(height / 5),
+            // h = 1e-7, // step used when approximating gradients
+            drawing_time = 30; // max time to run optimization
+
+        // create a Scalar Vector Graphics plot into the body of html
+        var svg = d3.select("body")
+            .append("svg")
+            .attr("width", width)
+            .attr("height", height);
+
+        // Parameters describing where function is defined
+        var domain_x = [-2, 2],
+            domain_y = [-2, 2],
+            domain_f = [-2, 8], // function range
+            contour_step = 0.5; // Step size of contour plot
+
+        var scale_x = d3.scaleLinear()
+            .domain([0, width])
+            .range(domain_x);
+
+        var scale_y = d3.scaleLinear()
+            .domain([0, height])
+            .range(domain_y);
+
+        var thresholds = d3.range(domain_f[0], domain_f[1], contour_step);
+
+        var color_scale = d3.scaleLinear()
+            .domain(d3.extent(thresholds))
+            .interpolate(function () { return d3.interpolateYlGnBu; });
+
+        // creates 3 group element, or 'g' element in JS syntax, assign them to different objects
+        var function_g = svg.append("g").on("mousedown", mousedown),
+            gradient_path_g = svg.append("g"),
+            menu_g = svg.append("g");
+        
+        /* Set up the contour plot */        
+
+        // create an empty contour object, with defined step size (threshold) and 2D area
+        var contours = d3.contours()
+            .size([nx, ny])
+            .thresholds(thresholds);
+
+        // calculate the objective function value at each grid location
+        var f_values = grid_f_values(nx, ny);
+        f_values = z_normalize(f_values);
+
+        // select all path elements in the svg group function_g, fill them with all colored contour lines representing objective function values.
+        function_g.selectAll("path")
+            .data(contours(f_values)) // fill the serialized objective function value into the contour object
+            .enter().append("path") // creates a new 'path' element for each filled contour object
+            .attr("d", d3.geoPath(d3.geoIdentity().scale(width / nx))) // define the 'd' attribute of path, the value expected is a string representing path type
+            .attr("fill", function (d) { return color_scale(d.value); }) // use the predefined color scale to fill each contour line with diff colors.
+            .attr("stroke", "none");
+
+            
+        // refresh contour plot when the dropdown menu selection changes
+        document.getElementById("obj_selection").addEventListener("change", function () {
+            // Get the selected option
+            obj_option = this.value;
+
+            // Remove the existing contour plot
+            function_g.selectAll("path").remove();
+
+            // re-calculate the objective function value at each grid location
+            f_values = grid_f_values(nx, ny);
+            f_values = z_normalize(f_values);
+
+            // select all path elements in the svg group function_g, fill them with all colored contour lines representing objective function values.
+            function_g.selectAll("path")
+                .data(contours(f_values)) // fill the serialized objective function value into the contour object
+                .enter().append("path") // creates a new 'path' element for each filled contour object
+                .attr("d", d3.geoPath(d3.geoIdentity().scale(width / nx))) // define the 'd' attribute of path, the value expected is a string representing path type
+                .attr("fill", function (d) { return color_scale(d.value); }) // use the predefined color scale to fill each contour line with diff colors.
+                .attr("stroke", "none");
+        });
+
+    /* Set up buttons */       
+        // var draw_bool = { "GA": true, "Gauss_newton": true, "Levenberg_m": true, "DFP": true, "BFGS": false, "Adam": false };
+
+        // var buttons = ["GA", "Gauss_newton", "Levenberg_m", "DFP", "BFGS", "Adam"];
+
+        var draw_bool = { "GA": true  };
+
+        var buttons = ["GA"];
+        
+        // creates the rectangular background for the algorithm selection menu
+        menu_g.append("rect")
+            .attr("x", 0)
+            .attr("y", height - 40)
+            .attr("width", width)
+            .attr("height", 40)
+            .attr("fill", "white")
+            .attr("opacity", 0.2);
+
+        // creates the buttons for selecting algorithms to display
+        menu_g.selectAll("circle")
+            .data(buttons)
+            .enter()
+            .append("circle")
+            .attr("cx", function (d, i) { return width / buttons.length * (i + 0.5); })
+            .attr("cy", height - 20)
+            .attr("r", 10)
+            .attr("stroke-width", 0.5)
+            .attr("stroke", "black")
+            .attr("class", function (d) { return d; })
+            .attr("fill-opacity", 0.5)
+            .attr("stroke-opacity", 1)
+            .on("mousedown", button_press);
+
+        menu_g.selectAll("text")
+            .data(buttons)
+            .enter()
+            .append("text")
+            .attr("x", function (d, i) { return width / buttons.length * (i + 0.5) + 18; })
+            .attr("y", height - 14)
+            .text(function (d) { return d; })
+            .attr("text-anchor", "start")
+            .attr("font-family", "Helvetica Neue")
+            .attr("font-size", 15)
+            .attr("font-weight", 200)
+            .attr("fill", "white")
+            .attr("fill-opacity", 0.8);
+
+        // define the actions trigger when each button is pressed, 
+        // i.e. button pressed = hollow circle = unselected
+        function button_press() {
+            var type = d3.select(this).attr("class")
+            if (draw_bool[type]) {
+                d3.select(this).attr("fill-opacity", 0);
+                draw_bool[type] = false;
+            } else {
+                d3.select(this).attr("fill-opacity", 0.5)
+                draw_bool[type] = true;
+            }
+        }
+
+
+    /* Plotting operations */
+
+        // var line_function = d3.line()
+        //     .x(function (d) { return d.x; })
+        //     .y(function (d) { return d.y; });
+
+        // // original plotting function
+        // function draw_path(path_data, type) {
+        //     var gradient_path = gradient_path_g.selectAll(type)
+        //         .data(path_data)
+        //         .enter()
+        //         .append("path")
+        //         .attr("d", line_function(path_data.slice(0, 1)))
+        //         .attr("class", type)
+        //         .attr("stroke-width", 3)
+        //         .attr("fill", "none")
+        //         .attr("stroke-opacity", 0.5)
+        //         .transition()
+        //         .duration(drawing_time)
+        //         .delay(function (d, i) { return drawing_time * i; })
+        //         .attr("d", function (d, i) { return line_function(path_data.slice(0, i + 1)); })
+        //         .remove();
+                
+        //     gradient_path_g.append("path")
+        //         .attr("d", line_function(path_data))
+        //         .attr("class", type)
+        //         .attr("stroke-width", 3)
+        //         .attr("fill", "none")
+        //         .attr("stroke-opacity", 0.5)
+        //         .attr("stroke-opacity", 0)
+        //         .transition()
+        //         .duration(path_data.length * drawing_time)
+        //         .attr("stroke-opacity", 0.5);
+        // };
+
+        // new plot function for multiple points in each step
+        // implementation 1 - only display the 1st step
+        function draw_path(path) {
+            let steps = path.length;
+            let stepCounter = 0;
+            let pastFewSteps = [];
+            let coordinatesPerStep = path[0].length;
+
+            setInterval(() => {
+
+                if (stepCounter >= steps) {
+                    return;
+                }
+                pastFewSteps.push(path[stepCounter]);
+                if (pastFewSteps.length > 1) {
+                    pastFewSteps.shift();
+                }
+                let line = d3.line()
+                    .x(function (d) { return x(d["x"]); })
+                    .y(function (d) { return y(d["y"]); });
+
+                gradient_path_g.selectAll("circle").remove();
+                for (let i = 0; i < pastFewSteps.length; i++) {
+                    for (let j = 0; j < coordinatesPerStep; j++) {
+                        gradient_path_g.append("circle")
+                            .datum(pastFewSteps[i][j])
+                            .attr("class", "line")
+                            .style("fill-opacity", 0.5 - (i * 0.25))
+                            .style("fill", "red")
+                            .attr("cx", function (d) { return d["x"]; })
+                            .attr("cy", function (d) { return d["y"]; })
+                            .attr("r", 5);
+                            // .remove();                            
+                    }
+                }
+                stepCounter++;
+            }, 20);
+        }
+
+        
+    /* Start optimization from click on contour map */
+
+        function mousedown() {
+            /* Get initial point */
+            var point = d3.mouse(this);
+            /* Optimize and draw paths */
+            optimize(scale_x(point[0]), scale_y(point[1]));
+        }
+
+        function optimize(x0, y0) {
+            gradient_path_g.selectAll("circle").remove();
+
+            if (draw_bool.GA) {
+                var ga_data = ga_path(x0, y0, 20);
+                draw_path(ga_data, "ga");
+            }
+            // if (draw_bool.Gauss_newton) {
+            //     var gauss_newton_data = gauss_newton_path(x0, y0, 200);
+            //     draw_path(gauss_newton_data, "gauss_newton");
+            // }
+            // if (draw_bool.Levenberg_m) {
+            //     var levenberg_m_data = levenberg_m_path(x0, y0, 200, 1);
+            //     draw_path(levenberg_m_data, "levenberg_m");
+            // }
+            // if (draw_bool.DFP) {
+            //     var dfp_data = dfp_path(x0, y0, 20);
+            //     draw_path(dfp_data, "dfp");
+            // }
+            // if (draw_bool.BFGS) {
+            //     var bfgs_data = bfgs_path(x0, y0, 20);
+            //     draw_path(bfgs_data, "bfgs");
+            // }
+            // if (draw_bool.Adam) {
+            //     var adam_data = adam_path(x0, y0, 1e-2, 100, 0.7, 0.999, 1e-6);
+            //     draw_path(adam_data, "adam");
+            // }
+        }
+
+    </script>

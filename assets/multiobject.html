@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="en">
+
+    <meta charset="utf-8">
+    
+    <head>
+        <!-- import plotly module -->
+        <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjs/11.5.0/math.js"></script>
+    </head>
+    
+    <body>
+        <h2> Weighted Sum Objectives with Prior </h2>
+        <div>
+            <form id = "objective_selection" style="display: flex; justify-content: space-between;">
+            </form>
+            <script>
+                const obj_titles = ['objective1', 'objective2', 'objective3'];
+              
+                const objectivesDiv = document.getElementById("objective_selection");
+              
+                for (let i = 0; i < obj_titles.length; i++) {
+                  const div = document.createElement("div");
+              
+                  div.innerHTML = `
+                    <label for="${obj_titles[i].toLowerCase()}" style="width: 100px">${obj_titles[i]}:</label>
+                    <select id="${obj_titles[i].toLowerCase()}" onchange="refreshPlot()" style="width: 100px">
+                      <option value="Quad">Quadratic</option>
+                      <option value="Rosenbrock">Rosenbrock</option>
+                      <option value="Bean">Bean</option>
+                      <option value="Jones">Jones</option>
+                      <option value="Quad_discrete">Quad_discrete</option>
+                      <option value="Rosenbrock_discrete">Rosenbrock_discrete</option>
+                      <option value="Bean_discrete">Bean_discrete</option>
+                      <option value="Jones_discrete">Jones_discrete</option>
+                      <option value="Custom">Custom</option>
+                    </select>
+                    <br>
+                    <div id="customTextbox${i + 1}" style="display:none">
+                      <label for="customExpression${i + 1}">Custom Expression:</label>
+                      <input type="text" id="customExpression${i + 1}">
+                    </div>
+                    <label for="weight${i + 1}" style="width: 100px">Weight${i + 1}     :</label>
+                    <input type="number" id="weight${i + 1}" value="1" onchange="refreshPlot()" style="width: 100px">
+                  `;
+              
+                  objectivesDiv.appendChild(div);
+                }
+            </script>
+        </div>
+        <div style="display: flex;">
+            <!-- 3D plot -->
+            <div id="plot3d" style="float: left; width: 700px; height: 1600px;"></div>
+            <!-- 2D contour plot -->
+            <div style="display: flex; flex-direction: column;">
+                <div id="plot2d0" style="float: right; width: 400px; height: 420px;"></div>
+                <div id="plot2d1" style="float: right; width: 400px; height: 350px;"></div>
+                <div id="plot2d2" style="float: right; width: 400px; height: 350px;"></div>
+                <div id="plot2d3" style="float: right; width: 400px; height: 350px;"></div>
+            </div>
+        </div>
+        <script>
+            // global variables
+            var weightedSum;
+            var defaultWeights = [];
+            var weight_list;
+            var zNormalized_list = [];
+            // Generate the x and y data from -2 to 2.
+            const x = [];
+            const y = [];
+            for (let i = -2; i <= 2; i += 0.1) {
+                x.push(i);
+                y.push(i);
+            }
+            
+            window.onload = function() {
+                // initialize and refresh weightedSum
+                createPlot();
+                
+                for (let i = 1; i <= 3; i++) {
+                    const weight = document.getElementById(`weight${i}`);
+                    weight.value = defaultWeights[i-1];
+
+                    // initialize the weight_list with default weights
+                    // weight_list[i-1] = defaultWeights[i-1];
+                    weight.style.color = "grey";
+                    
+                    // update function to watch weight textboxes and update weights in realtime
+                    weight.addEventListener("input", function() {
+                        weight.style.color = "black";
+                        weight_list[i-1] = parseInt(weight.value);
+                        // for (let j = 0; j < 3; j++) {
+                        //     weightedSum = math.add(weightedSum, math.multiply(zNormalized_list[i], weight_list[i])).toArray();
+                        // }
+                        refreshPlot();
+                    });
+                    // refreshPlot();
+                };                
+            }
+            // build objective functions
+            var f_Quad = function (x, y) {
+                var z = Math.pow(x, 2) + Math.pow(y, 2);
+                // z *= 0.01
+                return z
+            };
+
+            var f_Rosenbrock = function (x, y) {
+                return Math.pow(1 - x, 2) + 100 * Math.pow(y - Math.pow(x, 2), 2);
+            };
+
+            var f_Bean = function (x, y) {
+                return Math.pow(1 - x, 2) + Math.pow(1 - y, 2) + 0.5 * Math.pow(2 * y - Math.pow(x, 2), 2)
+            };
+
+            var f_Jones = function (x, y) {
+                return Math.pow(x, 4) + Math.pow(y, 4) - 4 * Math.pow(x, 3) - 3 * Math.pow(y, 3) + 2 * Math.pow(x, 2) + 2 * x * y;
+            };
+
+            // additional objective function processing, if required. 
+            function add_peaks(x, y) {
+                var z = f_Quad(x, y);
+                // add a local valley around (5,5)
+                z -= 5 * Math.exp(-((x - 0.5) ** 2 + (y - 0.5) ** 2))
+
+                // add the other valleys/peaks
+                z -= 8 * Math.exp(-0.5 * ((x + 0.2) ** 2 + (y + 0.3) ** 2))
+                z += 5 * Math.exp(-0.05 * ((x + 0.1) ** 2 + (y - 0.1) ** 2))
+                return z
+            };
+
+            function discretize(func, x, y) {
+                // Define the grid size
+                const gridSize = 0.2;
+
+                // Calculate the grid indices for x and y
+                const xIndex = Math.floor(x / gridSize);
+                const yIndex = Math.floor(y / gridSize);
+
+                // Calculate the x and y values for the first point in the grid
+                const x1 = xIndex * gridSize;
+                const y1 = yIndex * gridSize;
+
+                // Return the value of the objective function at the first point in the grid
+                var z = func(x1, y1);
+
+                // Return the discretized objective function
+                return z;
+            };
+
+            // Define objective functions
+            const objectives = {
+                "Quad": (x, y) => f_Quad(x, y),
+                "Bean": (x, y) => f_Bean(x, y),
+                "Rosenbrock": (x, y) => f_Rosenbrock(x, y),
+                "Jones": (x, y) => f_Jones(x, y),
+                "Quad_discrete": (x, y) => discretize(f_Quad, x, y),
+                "Bean_discrete": (x, y) => discretize(f_Bean, x, y),
+                "Rosenbrock_discrete": (x, y) => discretize(f_Rosenbrock, x, y),
+                "Jones_discrete": (x, y) => discretize(f_Jones, x, y),
+                "Custom": (x, y) => 0,
+                // "None": (x, y) => 0*x+0*y,
+            };
+
+            // Function to create the new plots based on the selected objective function and algorithm
+            function createPlot() { 
+
+                obj_list = [];
+                for (let i = 1; i <= 3; i++) {
+                    var obj = document.getElementById(`objective${i}`).value;
+                    var box = document.getElementById(`customTextbox${i}`);
+
+                    if (obj === "Custom") {
+                        box.style.display = "block";
+                        var customExpression = document.getElementById(`customExpression${i}`).value;
+                        var parsedExpression = math.parse(customExpression);
+                        var obj_custom = parsedExpression.compile();
+                        console.log(parsedExpression);
+                    } else {
+                        box.style.display = "none";
+                    };
+                    obj_list.push(obj);
+                };
+
+                // initialize weight_list with default weigths
+                dataGeneration(obj_list);
+                weight_list = defaultWeights;
+
+                // // get weighted sum
+                weightedSum = getWeightedSum()
+                
+                // Call the makeStac3DkPlot() function to create the surface plots
+                makeStack3DPlot(obj_list, "plot3d");
+                // Call the makeStack2DPlot() function to create the contour plots
+                makeStack2DPlot(obj_list, "plot2d");
+            }
+
+            // Function to refresh the 2D and 3D plot based on the selected objective function and algorithm
+            function refreshPlot() {
+
+                obj_list = [];
+                for (let i = 1; i <= 3; i++) {
+                    var obj = document.getElementById(`objective${i}`).value;
+                    var box = document.getElementById(`customTextbox${i}`);
+
+                    if (obj === "Custom") {
+                        box.style.display = "block";
+                        var customExpression = document.getElementById(`customExpression${i}`).value;
+                        var parsedExpression = math.parse(customExpression);
+                        var obj_custom = parsedExpression.compile();
+                        console.log(parsedExpression);
+                    } else {
+                        box.style.display = "none";
+                    };
+                    obj_list.push(obj);
+                };
+                
+                // refresh zNormalized_list to ditch old data
+                zNormalized_list = []
+
+                // initialize and refresh weightedSum
+                dataGeneration(obj_list);
+
+                // get weighted sum
+                weightedSum = getWeightedSum()
+                
+                // Call the makeStac3DkPlot() function to create the surface plots
+                makeStack3DPlot(obj_list, "plot3d");
+                // Call the makeStack2DPlot() function to create the contour plots
+                makeStack2DPlot(obj_list, "plot2d");
+            }
+
+            // function to generate the Z_axis data before plotting
+            function dataGeneration(obj_list){
+                let counter = 0;
+
+                // refresh the old default wegiths
+                defaultWeights = [];
+
+                // Iterate through the obj_list
+                obj_list.forEach((obj) => {
+                    // Get the selected objective function
+                    const objective = objectives[obj];
+
+                    // Obtain the value of objective function to be plotted on z-axis
+                    const z = [];
+                    for (let i = 0; i < x.length; i++) {
+                        z[i] = [];
+                        for (let j = 0; j < y.length; j++) {
+                            z[i][j] = objective(x[i], y[j]);
+                        }
+                    }
+                    // Get the min and max values of z
+                    const zMin = Math.min(...z.flat());
+                    const zMax = Math.max(...z.flat());
+                    defaultWeight = 1 / (zMax - zMin);
+                    defaultWeights.push(defaultWeight);
+
+                    // Normalize the z values
+                    const zNormalized = z.map((row) => {
+                        return row.map((value) => {
+                            return (value - zMin) / (zMax - zMin) * 7.5;
+                        });
+                    });
+                    zNormalized_list.push(zNormalized);
+                    counter++;
+                });
+            };
+
+            function getWeightedSum(obj_list){
+                // get the shape of each z value, i.e. a 2D array
+                const [m, n] = math.size(zNormalized_list[0]).valueOf();
+
+                // create a 2D array of zeros with the same shape as firstElement
+                var weightedSum = math.zeros(m, n);
+                
+                // // (to comment out) start with default Weights
+                // weight_list = defaultWeights
+
+                for (let i = 0; i < zNormalized_list.length; i++) {
+                    weightedSum = math.add(weightedSum, math.multiply(zNormalized_list[i], weight_list[i]));
+                }
+                // console.log(weightedSum)
+                return weightedSum.toArray();
+                
+            };
+
+            // function to make the plot
+            function makeStack3DPlot(obj_list, plotname) {
+
+                // Define an empty list to store the p_data objects
+                let p_data_list = [];                
+                
+                let counter = 0;
+                // console.log('Seeinside3D', zNormalized_list);
+                obj_list.forEach((obj) => {
+
+                    // offset the surface to different elevations
+                    const zShifted = zNormalized_list[counter].map((row) => {
+                        return row.map((value) => {
+                            return value + 20 - counter * 10;
+                        });
+                    });
+
+                    const p_data = {
+                        type: "surface",
+                        x: x,
+                        y: y,
+                        z: zShifted,
+                        showscale: false,
+                        opacity: 0.9, 
+                        name: obj,
+                    };
+                    // Append the p_data object to the p_data_list
+                    p_data_list.push(p_data);
+                    // p_data_list.push(w_data);
+                    counter++;
+                });
+                
+                // add weightedSum
+                const zShifted = weightedSum.map((row) => {
+                    return row.map((value) => {
+                        return value + 30;
+                    });
+                });
+                
+                const p_data = {
+                    type: "surface",
+                    x: x,
+                    y: y,
+                    z: zShifted,
+                    showscale: false,
+                    opacity: 0.9,
+                    name: "weighted sum",
+                    contours: {            
+                        z: {
+                            show: true,
+                            // size: 0.05,
+                            ncontours: 10,
+                            usecolormap: true,
+                            highlightcolor: "#42f462",
+                            project: { z: true },
+                            colorscale: [[0, 'rgb(0,0,0)'], [1, 'rgb(70,70,70)']],
+                        },
+                    },
+                };                
+                p_data_list.push(p_data);
+
+                // Create the layout of a 3D surface plot
+                const p_layout = {
+                    title: { text: "" },
+                    margin: { l: 65, r: 50, b: 65, t: 0 },
+                    scene: {
+                        xaxis: { title: "x", showline: true },
+                        yaxis: { title: "y", showline: true },
+                        zaxis: { title: "f(x,y)", showline: true, range: [0, 35] },
+                        width: 700,  // set the width of the container to 800 pixels
+                        height: 1500,  // set the height of the container to 600 pixels
+                        dragmode: false,
+                        aspectmode: "manual",
+                        camera: {
+                            eye: { x: 4, y: -8, z: 1.2 },  // set the eye position
+                            // eye: { x: 1.87, y: 0.88, z: -0.64 },  
+                            center: { x: 0, y: 0, z: 0 },  // set the center of the scene
+                            up: { x: 0, y: 0, z: 1 }  // set the up direction
+                        },
+                        aspectratio: { x: 1, y: 1, z: 6 },
+                    },
+                    hovermode: "closest",
+                    // autosize: true,
+                };
+
+                // Set the additional configuration of a 3D surface plot
+                const p_config = {
+                    responsive: true,
+                    displaylogo: false,
+                    showTips: true,
+                    modeBarButtonsToRemove: ["sendDataToCloud"],
+                }
+                // console.log(p_data_list[0])
+                Plotly.newPlot(plotname, p_data_list, p_layout, p_config, { responsive: true });
+                // Plotly.newPlot(plotname, p_data_list);
+            }
+            
+            function makeStack2DPlot(obj_list, plotname) {
+                var counter = 0;
+                var p_data_list = [];
+
+                // plot weightedSum
+                var p_data = {
+                    type: 'contour',
+                    x: x,
+                    y: y,
+                    z: weightedSum,    
+                    showscale: false,                
+                    contours: {
+                        start: 0,
+                        end: 1,
+                        size: 0.1
+                    },
+                    name: "Weighted Sum"
+                };
+                var p_layout = {
+                    title: { text: "weighted sum" },
+                    margin: { l: 65, r: 50, b: 100, t: 50 },
+                    xaxis: { title: 'x' },
+                    yaxis: { title: 'y' },
+                    scene: {
+                        width: 400,
+                        height: 300,
+                    },
+                };                
+                Plotly.newPlot('plot2d0', [p_data], p_layout);
+                // console.log(obj_list);
+
+                // plot the 3 objectives
+                obj_list.forEach((obj) => {
+                    var p_data = {
+                        type: 'contour',
+                        x: x,
+                        y: y,                    
+                        z: zNormalized_list[counter],
+                        showscale: false,
+                        contours: {
+                            start: 0,
+                            end: 1,
+                            size: 0.1
+                        },
+                        name: obj,
+                    };
+                    var p_layout_obj = {
+                        title: { text: obj },
+                        margin: { l: 65, r: 50, b: 50, t: 30 },
+                        xaxis: { title: 'x' },
+                        yaxis: { title: 'y' },
+                        scene: {
+                            width: 400,
+                            height: 300,
+                        },
+                    };                    
+
+                    Plotly.newPlot(`${plotname}${counter+1}`, [p_data], p_layout_obj);
+                    counter++;
+                });                
+            }
+
+        </script>
+    </body>
+</html>
